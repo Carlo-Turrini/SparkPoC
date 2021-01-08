@@ -1,9 +1,10 @@
 from influxdb_client import InfluxDBClient
 from influxdb_client.client.flux_table import FluxTable
-from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import SparkSession
 from pyspark import SparkConf
 from pyspark.sql.functions import col
-from pyspark.sql.types import StructType, StructField, ArrayType, DoubleType, IntegerType, TimestampType
+from pyspark.sql.types import StructType, StructField, ArrayType, DoubleType, IntegerType, TimestampType, StringType,\
+    FloatType
 from pyspark.ml.feature import VectorAssembler, MinMaxScaler, MinMaxScalerModel
 from pyspark.ml.functions import vector_to_array
 from pyspark.sql.pandas.functions import pandas_udf
@@ -27,12 +28,12 @@ def influx_data():
     client = InfluxDBClient(url=url, token=token, org=org)
 
     query = f'from(bucket: \"{bucket}\")' \
-            f'|> range(start: -1d) ' \
+            f'|> range(start: -2d) ' \
             f'|> filter(fn: (r) => r["_measurement"] == "kafka_consumer")' \
             f'|> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")' \
             f'|> keep(columns: ["_time", "set_t", "v_t"])' \
             f'|> rename(columns: {{_time: "timestamp"}})' \
-            f'|> sort(columns: ["timestamp], desc: false)'
+            f'|> sort(columns: ["timestamp"], desc: false)'
 
     tables: list[FluxTable] = client.query_api().query(query)
     output_list = []
@@ -60,12 +61,17 @@ def main():
 
         schema = StructType([
             StructField('timestamp', TimestampType(), False),
-            StructField('set_t', IntegerType(), False),
-            StructField('v_t', IntegerType(), False)
+            StructField('set_t', StringType(), False),
+            StructField('v_t', FloatType(), False)
         ])
 
         # Crete df from influx data
-        df = ss.createDataFrame(data=influx_data(), schema=schema)
+        df = ss.createDataFrame(data=influx_data(), schema=schema)\
+            .select(
+            col('timestamp'),
+            col('set_t').cast(IntegerType()).alias('set_t'),
+            col('v_t')
+        )
 
         # Prepare features for training with Horovod
         assembler = VectorAssembler(inputCols=["set_t", "v_t"], outputCol="features")
@@ -76,7 +82,7 @@ def main():
         scaler = MinMaxScaler(inputCol="features", outputCol="scaled_features")
 
         scaler_model: MinMaxScalerModel = scaler.fit(features_df)
-        scaler_model.save('/home/tarlo/min_max_scaler_model_modbus')
+        scaler_model.write().overwrite().save('/home/tarlo/min_max_scaler_model_modbus')
 
         scaled_df = scaler_model.transform(features_df)
 
@@ -86,7 +92,7 @@ def main():
             col('v_t'),
             col('timestamp'),
             vector_to_array(col('scaled_features')).alias('scaled_features')
-        )
+        ).orderBy(col('timestamp'), ascending=True)
 
         # Nota: se la conversione da pandas a arrow dovesse fallire, ricorda che arrow non
         # può convertire ndarray di dimensione > 1, però può convertire liste innestate per cui
@@ -96,28 +102,24 @@ def main():
             for pdf in iterator:
                 values = pdf['scaled_features'].values.tolist()
                 df = pd.DataFrame(values, columns=['set_t', 'v_t'])
-                print(df)
-                xs, ys = [], []
+                xs = []
                 for i in range(len(df) - TIME_STEPS):
-                    xs.append(df.iloc[i:(i + TIME_STEPS)].values.tolist())
-                    ys.append(df.iloc[i + TIME_STEPS].values)
-                yield pd.DataFrame({'features': xs, 'labels': ys})
+                    xs.append(df.iloc[i:(i + TIME_STEPS)].values.flatten())
+                yield pd.DataFrame({'features': xs, 'labels': xs})
 
         pandas_schema = StructType([
-            StructField("features", ArrayType(ArrayType(DoubleType())), False),
+            StructField("features", ArrayType(DoubleType()), False),
             StructField("labels", ArrayType(DoubleType()), False)
         ])
 
-        feature_df = scaled_df.coalesce(1).mapInPandas(featurize, schema=pandas_schema)
+        feature_df = scaled_df.coalesce(1).mapInPandas(featurize, schema=pandas_schema).repartition(2)
+
+        feature_df.printSchema()
+        feature_df.show(n=2)
 
         # Prepare Horovod Estimator for training
         store = LocalStore('file:///home/tarlo/spark_horovod_influx_sacmi_store')
 
-        # Tutto da rivedere! Devi prima creare delle sequenze per i dati da mandare in input alla rete
-        # Per info cerca online LSTM for anomaly detection
-        # Se non ti ci raccapezzi magari usa la Horovod Run Api che è di più basso livello e
-        # ti permette di avere più controllo rispetto alla Horovod Estimator Api
-        # Chiaramente devi anche cambiare la label_cols in KerasEstimator
         def model_builder():
             input_layer = keras.layers.Input(shape=(20, 2), name='input')
 
@@ -138,15 +140,13 @@ def main():
             return model
 
         model = model_builder()
-        optimizer = 'adam'
-        loss = 'mae'
+        optimizer = keras.optimizers.Adam()
+        loss = keras.losses.MeanAbsoluteError()
         batch_size = 64
         epochs = 10
 
-        # Disable shuffling of data! Enable statefulness of LSTM! Probably need to use Horovod Run API?
-        # Maybe setting shuffle_buffer_size=0 will do the trick
         keras_estimator = hvd.KerasEstimator(
-            num_proc=num_proc,
+            num_proc=2,
             shuffle_buffer_size=1,
             store=store,
             model=model,
@@ -176,22 +176,35 @@ def main():
             signatures=None,
             options=None)
 
-        pred_df = keras_model.transform(features_df)
+        pred_df = keras_model.transform(feature_df)
 
-        @pandas_udf("double")
-        def calc_mae(pred_series: pd.Series, orig_series: pd.Series) -> pd.Series:
-            mae_arr = []
-            for pred, orig in zip(pred_series, orig_series):
-                pred = np.array(pred)
-                orig = np.array(orig)
-                mae_arr.append(np.mean(np.abs(pred - orig), axis=1))
-            return pd.Series(mae_arr)
+        pred_df.printSchema()
+        pred_df.show(n=2)
 
-        pred_df = pred_df.withColumn("mae", calc_mae("predict", "features"))
+        pred_df = pred_df.select(
+            col('features'),
+            col('labels'),
+            vector_to_array(col('predict')).alias('predict')
+        )
 
-        max_mae_df = pred_df.groupby().max('mae')
+        pred_df.printSchema()
+        pred_df.show(n=2)
 
-        max_mae_df.write.mode("overwrite").csv(path='/home/tarlo/sacmi_mae_threshold', header=True)
+        @pandas_udf("array<double>")
+        def max_mae_udf(pred_series: pd.Series, orig_series: pd.Series) -> np.array:
+            preds = np.array(pred_series.values.tolist()).reshape(-1, 20, 2)
+            print("Preds: " + str(preds.shape))
+            origs = np.array(orig_series.values.tolist()).reshape(-1, 20, 2)
+            print("Origs: " + str(origs.shape))
+
+            max_mae = np.max(np.mean(np.abs(preds - origs), axis=1), axis=0)
+            print("Max mae: " + str(max_mae))
+            print(max_mae.shape)
+            return max_mae
+
+        max_mae_df = pred_df.select(max_mae_udf('predict', 'features').alias('mae_threshold'))
+
+        max_mae_df.write.mode("overwrite").parquet(path='/home/tarlo/sacmi_mae_threshold')
 
         ss.stop()
 

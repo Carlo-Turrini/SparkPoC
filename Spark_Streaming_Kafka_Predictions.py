@@ -58,33 +58,42 @@ def main():
         )
 
         pandas_schema = StructType([
-            StructField('isAnomaly', BooleanType(), False),
-            StructField('threshold', DoubleType(), False),
-            StructField('mae', DoubleType(), False),
-            StructField('reconstructed', ArrayType(ArrayType(DoubleType())), False),
+            StructField('isAnomaly', BooleanType(), True),
+            StructField('threshold', ArrayType(DoubleType()), False),
+            StructField('mae', ArrayType(DoubleType()), True),
+            StructField('reconstructed', ArrayType(ArrayType(DoubleType())), True),
             StructField('original', ArrayType(ArrayType(DoubleType())), False)
         ])
 
-        @pandas_udf(pandas_schema) #potresti dover aggiungere il PandasUDFType
+        @pandas_udf(pandas_schema)
         def predict(df_iterator: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
             #Controlla la configurazione una volta che hai fatto il deployment
             #Fai il load del MAE threshold!
+            threshold = pd.read_parquet(engine='pyarrow', path='file:///home/tarlo/sacmi_mae_threshold')
             sc = SeldonClient(deployment_name='lstm_anomaly', namespace='istio-seldon',
                               gateway_endpoint='localhost:8003', gateway='istio')
             for df in df_iterator:
-                print(df)
-                features = df['scaled_features'].values
-                features_arr = np.array(features)
-                print(features_arr.shape) #Dovrebbe essere (1, 20, 2)
+                if len(df) < 20:
+                    yield pd.DataFrame(data=[None, threshold.to_numpy(), None, None,
+                                             df['scaled_features'].values.tolist()],
+                                       columns=['isAnomaly', 'threshold', 'mae', 'reconstructed', 'original'])
+                else:
+                    print(df)
+                    features = df['scaled_features'].values
+                    features_arr = np.array(features)
+                    print(features_arr.shape) #Dovrebbe essere (1, 20, 2)
 
-                print("Da completare")
-                #Fai la chimata al client Seldon
-                #Recupera la prediction
-                #Calcola l'mae tra la prediction e original
-                #Confronta con il threshold per determinare se è un'anomalia
-                #Crea il df di ritorno
-                #mae = np.mean(np.abs(prediction - features_arr), axis=1)
-                yield pd.DataFrame()
+                    print("Da completare")
+                    #Fai la chimata al client Seldon
+                    #Recupera la prediction
+                    #Calcola l'mae tra la prediction e original -> np.mean(np.abs(preds - origs), axis=1)
+                    #Confronta con il threshold per determinare se è un'anomalia
+                    #Crea il df di ritorno
+                    #mae = np.mean(np.abs(prediction - features_arr), axis=1)
+                    #Seldon request: tensor, ndarray, tftensor
+                    #Seldon response: protobuf, dict
+                    #transport:grpc
+                    yield pd.DataFrame()
 
         prediction_df = scaled_df.withWatermark('timestamp', '5 seconds')\
             .groupby(window(col('timestamp'), '20 seconds', '1 seconds'))\
