@@ -57,6 +57,9 @@ def main():
             vector_to_array(col('scaled_features')).alias('scaled_features')
         )
 
+        #Alternativa: scompatto e aggiungo campi:
+        #   threshold -> threshold_set_t, threshold_v_t -> DoubleType()
+        #   mae -> mae_set_t, mae_v_t -> DoubleType()
         pandas_schema = StructType([
             StructField('isAnomaly', BooleanType(), True),
             StructField('threshold', ArrayType(DoubleType()), False),
