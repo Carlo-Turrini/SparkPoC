@@ -4,6 +4,7 @@ import org.apache.spark.sql.Row
 import org.apache.spark.sql.expressions.{MutableAggregationBuffer, UserDefinedAggregateFunction}
 import org.apache.spark.sql.types.{ArrayType, DataType, DoubleType, StructType}
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 object GroupArray extends UserDefinedAggregateFunction {
@@ -28,7 +29,15 @@ object GroupArray extends UserDefinedAggregateFunction {
     buffer1.update(0, buffer1.getSeq[Array[Double]](0) ++ buffer2.getSeq[Array[Double]](0))
   }
 
+  private def sortByTimestamp(arr1: mutable.WrappedArray[Double], arr2: mutable.WrappedArray[Double]) = {
+    arr1(0) < arr2(0)
+  }
+
+  private def mapToFeatures(arr: mutable.WrappedArray[Double]) = {
+    arr.drop(1)
+  }
+
   override def evaluate(buffer: Row): Any = {
-    buffer.getSeq[Array[Double]](0)
+    buffer.getSeq[mutable.WrappedArray[Double]](0).sortWith(sortByTimestamp).map(mapToFeatures)
   }
 }

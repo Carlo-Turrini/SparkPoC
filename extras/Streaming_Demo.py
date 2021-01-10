@@ -57,7 +57,6 @@ def main():
             col('timestamp'),
             col('timestamp').cast(LongType()).alias('timestamp_long'),
             col('scaled_features')
-            #vector_to_array(col('scaled_features')).alias('scaled_features')
         )
         #Se vuoi tornare come prima rimuovi il secondo VectorAssembler!
         assembler2 = VectorAssembler(inputCols=['timestamp_long', 'scaled_features'], outputCol='features_with_timestamp')
@@ -66,36 +65,10 @@ def main():
             vector_to_array(col('features_with_timestamp')).alias('features_with_timestamp')
         )
 
-        """"#Alternativa: scompatto e aggiungo campi:
-        #   threshold -> threshold_set_t, threshold_v_t -> DoubleType()
-        #   mae -> mae_set_t, mae_v_t -> DoubleType()
-        pandas_schema = StructType([
-            StructField('num_of_elements', IntegerType(), False)
-        ])
-
-        def predict(df: pd.DataFrame) -> pd.DataFrame:
-            #Controlla la configurazione una volta che hai fatto il deployment
-            #Fai il load del MAE threshold!
-            threshold = pd.read_parquet(engine='pyarrow', path='file:///home/tarlo/sacmi_mae_threshold')
-
-            length = len(df)
-            print("Lunghezza df: " + str(length))
-            print(df)
-            return pd.DataFrame({'num_of_elements': [length]})
-
-        @pandas_udf('int')
-        def demo_pred(series: pd.Series) -> int:
-            print("Series: \n")
-            print(series)
-            return len(series)"""
-
         def featurize(col):
             sc = SparkContext._active_spark_context
             _featurize = sc._jvm.udaf_demo.GroupArray.apply
             return Column(_featurize(_to_seq(sc, [col], _to_java_column)))
-        """prediction_df = scaled_df.withWatermark('timestamp', '5 seconds')\
-            .groupby(window(col('timestamp'), '20 seconds', '1 seconds'))\
-            .applyInPandas(predict, pandas_schema)"""
 
         prediction_df = assembled_df.withWatermark('timestamp', '5 seconds')\
             .groupby(window(col('timestamp'), '20 seconds', '1 seconds'))\
