@@ -87,7 +87,7 @@ def main():
             StructField('threshold_v_t', DoubleType(), False),
             StructField('mae_set_t', DoubleType(), True),
             StructField('mae_v_t', DoubleType(), True),
-            StructField('reconstructed', ArrayType(ArrayType(DoubleType())), True)
+            StructField('prediction', ArrayType(ArrayType(DoubleType())), True)
         ])
 
         @pandas_udf(pandas_schema)
@@ -95,34 +95,29 @@ def main():
             #Controlla la configurazione una volta che hai fatto il deployment
             #Fai il load del MAE threshold!
             threshold = pd.read_parquet(engine='pyarrow', path='file:///home/tarlo/sacmi_mae_threshold')
-            sc = SeldonClient(deployment_name='lstm_anomaly', namespace='istio-seldon',
-                              gateway_endpoint='localhost:80', gateway='istio')
+            sc = SeldonClient(deployment_name='lstm-sacmi-model', namespace='istio-seldon',
+                              gateway_endpoint='localhost:8003', gateway='istio')
             threshold = threshold.to_numpy()
             for series in series_iterator:
                 results = []
                 for elem in series.values.tolist():
-                    data_point = []
                     if len(elem) < 20:
                         data_point = [None, threshold[0], threshold[1], None, None, None]
                         results.append(data_point)
                     else:
                         print(elem)
-                        features = np.array(elem)
+                        features = np.array(elem).astype(np.float32)
                         print(features.shape) #Dovrebbe essere (1, 20, 2)
                         #eventualmente fare reshape:
-                        #   features = features.reshape(1, 20, 2)
-                        print("Da completare")
-                        #Fai la chimata al client Seldon
-                        #Recupera la prediction
-                        #Calcola l'mae tra la prediction e original -> np.mean(np.abs(preds - origs), axis=1)
-                        #Confronta con il threshold per determinare se è un'anomalia
-                        #Crea il df di ritorno
-                        #mae = np.mean(np.abs(prediction - features_arr), axis=1)
-                        #Seldon request: tensor, ndarray, tftensor
-                        #Seldon response: protobuf, dict
-                        #transport:grpc
+                        features = features.reshape(1, 20, 2)
+                        r = sc.predict(transport='grpc', shape=features.shape, data=features, client_return_type='dict')
+                        prediction = np.array(r.response.get('data').get('tftensor').get('floatVal')).reshape(-1, 20, 2)
+                        mae = np.mean(np.abs(prediction - features), axis=1)
+                        anomaly = mae[0] > threshold[0] or mae[1] > threshold[1]
+                        data_point = [anomaly, threshold[0], threshold[1], mae[0][0], mae[0][1], prediction.tolist()]
+                        results.append(data_point)
                 yield pd.DataFrame(data=results, columns=['isAnomaly', 'threshold_set_t', 'threshold_v_t',
-                                                          'mae_set_t', 'mae_v_t', 'reconstructed'])
+                                                          'mae_set_t', 'mae_v_t', 'prediction'])
 
         prediction_df = features_df.select(
             col('window'),
@@ -139,7 +134,7 @@ def main():
                                                       col('predictions.threshold_set_t').alias('threshold_set_t'),
                                                       col('predictions.threshold_v_t').alias('threshold_v_t'),
                                                       col('features'),
-                                                      col('predictions.reconstructed').alias('reconstructed')))\
+                                                      col('predictions.prediction').alias('prediction')))\
             .select(
                 to_json(col('value')).alias('value'),
                 col('window.start').alias('key')
