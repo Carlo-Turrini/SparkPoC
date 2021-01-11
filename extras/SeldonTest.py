@@ -1,7 +1,9 @@
 from seldon_core.seldon_client import SeldonClient
 import numpy as np
 
-
+# Copy model to PV:
+#   kubectl cp /root/my-local-file my-namepace/my-pod:/root/remote-filename
+#   kubectl cp /home/tarlo/models/sacmi-anomaly-detection/ istio-seldon/data-access:/data/models/lstm-anomaly
 # Deploy model:
 #   kubectl apply -f /mnt/c/Users/carlo/PycharmProjects/SparkPoC/lstm_sacmi_anomaly_detection.yaml
 # Esponi istio:
