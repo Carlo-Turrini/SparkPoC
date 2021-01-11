@@ -83,8 +83,8 @@ def main():
         #   mae -> mae_set_t, mae_v_t -> DoubleType()
         pandas_schema = StructType([
             StructField('isAnomaly', BooleanType(), True),
-            StructField('threshold_set_t', DoubleType(), False),
-            StructField('threshold_v_t', DoubleType(), False),
+            StructField('threshold_set_t', DoubleType(), True),
+            StructField('threshold_v_t', DoubleType(), True),
             StructField('mae_set_t', DoubleType(), True),
             StructField('mae_v_t', DoubleType(), True),
             StructField('prediction', ArrayType(ArrayType(DoubleType())), True)
@@ -92,23 +92,24 @@ def main():
 
         @pandas_udf(pandas_schema)
         def predict(series_iterator: Iterator[pd.Series]) -> Iterator[pd.DataFrame]:
-            #Controlla la configurazione una volta che hai fatto il deployment
+            #Fare import necessari?
+            #   import pandas as pd
+            #   import numpy as np
+            #   from seldon_core.seldon_client import SeldonClient
             #Fai il load del MAE threshold!
             threshold = pd.read_parquet(engine='pyarrow', path='file:///home/tarlo/sacmi_mae_threshold')
             sc = SeldonClient(deployment_name='lstm-sacmi-model', namespace='istio-seldon',
                               gateway_endpoint='localhost:8003', gateway='istio')
-            threshold = threshold.to_numpy()
+            threshold = threshold.to_numpy()[0][0]
             for series in series_iterator:
                 results = []
-                for elem in series.values.tolist():
+                for elem in series.values:
+                    elem = elem.tolist()
                     if len(elem) < 20:
                         data_point = [None, threshold[0], threshold[1], None, None, None]
                         results.append(data_point)
                     else:
-                        print(elem)
                         features = np.array(elem).astype(np.float32)
-                        print(features.shape) #Dovrebbe essere (1, 20, 2)
-                        #eventualmente fare reshape:
                         features = features.reshape(1, 20, 2)
                         r = sc.predict(transport='grpc', shape=features.shape, data=features, client_return_type='dict')
                         prediction = np.array(r.response.get('data').get('tftensor').get('floatVal')).reshape(-1, 20, 2)

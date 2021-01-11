@@ -76,9 +76,52 @@ def main():
 
         prediction_df.printSchema()
 
+        pandas_schema = StructType([
+            StructField('shape_before', StringType(), True),
+            StructField('shape_after', StringType(), True),
+            StructField('threshold_set_t', DoubleType(), True),
+            StructField('threshold_v_t', DoubleType(), True)
+        ])
+
+        @pandas_udf(pandas_schema)
+        def predict(series_iterator: Iterator[pd.Series]) -> Iterator[pd.DataFrame]:
+            import pandas as pd
+            import numpy as np
+            # Controlla la configurazione una volta che hai fatto il deployment
+            # Fai il load del MAE threshold!
+            threshold = pd.read_parquet(engine='pyarrow', path='file:///home/tarlo/sacmi_mae_threshold')
+            threshold = threshold.to_numpy()[0][0]
+            for series in series_iterator:
+                results = []
+                for elem in series.values:
+                    elem = elem.tolist()
+                    if len(elem) < 20:
+                        data_point = [None, None, threshold[0], threshold[1]]
+                        results.append(data_point)
+                    else:
+                        features = np.array(elem).astype(np.float32)
+                        shape_before = str(features.shape)
+                        # eventualmente fare reshape:
+                        features = features.reshape(1, 20, 2)
+                        shape_after = str(features.shape)
+                        data_point = [shape_before, shape_after, threshold[0], threshold[1]]
+                        results.append(data_point)
+                yield pd.DataFrame(data=results, columns=['shape_before', 'shape_after', 'threshold_set_t',
+                                                          'threshold_v_t'])
+
+        final_df = prediction_df.select(
+            col('window'),
+            col('features'),
+            predict('features').alias('pred')
+        )
+        #Add filtering of null values! Or not?
         #Scrivo i risultati delle prediction su Kafka
-        sq = prediction_df.withColumn("value", struct(col('features'), col('window.start').alias('window_start'),
-                                                      col('window.end').alias('window_end')))\
+        sq = final_df.withColumn("value", struct(col('features'), col('window.start').alias('window_start'),
+                                                      col('window.end').alias('window_end'),
+                                                      col('pred.shape_before').alias('shape_before'),
+                                                      col('pred.shape_after').alias('shape_after'),
+                                                      col('pred.threshold_set_t').alias('threshold_set_t'),
+                                                      col('pred.threshold_v_t').alias('threshold_v_t')))\
             .select(
                 to_json(col('value')).alias('value')
             )\

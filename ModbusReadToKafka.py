@@ -8,7 +8,7 @@ def main():
     #Ricorda di avviarlo da WSL2
     #Se non funziona controlla che l'indirizzo IPv4 su Windows sia quello riportato nella connessione
     #   a ModbusTcpClient tramite ipconfig
-    client = ModbusTcpClient('192.168.1.56', port=502)
+    client = ModbusTcpClient('192.168.1.179', port=502)
     client.connect()
     UNIT = 0x1
     topic = "temperature_modbus"
