@@ -14,6 +14,10 @@ from typing import Iterator
 from seldon_core.seldon_client import SeldonClient
 
 
+# spark-submit
+# --jars /mnt/c/Users/carlo/Desktop/SbtScalaDemo/target/scala-2.12/sbtscalademo_2.12-0.2.jar
+# --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.0.1
+# Streaming_Demo.py
 def main():
     ss = None
     try:
@@ -23,7 +27,7 @@ def main():
         ss = SparkSession.builder \
             .appName("Streaming Inference - Sacmi") \
             .config(conf=sconf) \
-            .master("local[*]")\
+            .master("local[1]")\
             .getOrCreate()
 
         json_schema = StructType([
@@ -87,7 +91,7 @@ def main():
             StructField('threshold_v_t', DoubleType(), True),
             StructField('mae_set_t', DoubleType(), True),
             StructField('mae_v_t', DoubleType(), True),
-            StructField('prediction', ArrayType(ArrayType(DoubleType())), True)
+            StructField('prediction', ArrayType(ArrayType(ArrayType(DoubleType()))), True)
         ])
 
         @pandas_udf(pandas_schema)
@@ -112,10 +116,11 @@ def main():
                         features = np.array(elem).astype(np.float32)
                         features = features.reshape(1, 20, 2)
                         r = sc.predict(transport='grpc', shape=features.shape, data=features, client_return_type='dict')
+                        print(r)
                         prediction = np.array(r.response.get('data').get('tftensor').get('floatVal')).reshape(-1, 20, 2)
-                        mae = np.mean(np.abs(prediction - features), axis=1)
+                        mae = np.mean(np.abs(prediction - features), axis=1)[0]
                         anomaly = mae[0] > threshold[0] or mae[1] > threshold[1]
-                        data_point = [anomaly, threshold[0], threshold[1], mae[0][0], mae[0][1], prediction.tolist()]
+                        data_point = [anomaly, threshold[0], threshold[1], mae[0], mae[1], prediction.tolist()]
                         results.append(data_point)
                 yield pd.DataFrame(data=results, columns=['isAnomaly', 'threshold_set_t', 'threshold_v_t',
                                                           'mae_set_t', 'mae_v_t', 'prediction'])
@@ -125,6 +130,21 @@ def main():
             col('features'),
             predict('features').alias('predictions')
         )
+
+        #Se voglio filtrare le righe che presentano valori null, ovvero per le quali non è stata fatta alcuna
+        #   prediction per mancanza di dati sufficienti nella window:
+        """
+        prediction_df = prediction_df.select(
+            col('window'),
+            col('features'),
+            col('predictions.isAnomaly').alias('isAnomaly'),
+            col('predictions.mae_set_t').alias('mae_set_t'),
+            col('predictions.mae_v_t').alias('mae_v_t'),
+            col('predictions.threshold_set_t').alias('threshold_set_t'),
+            col('predictions.threshold_v_t').alias('threshold_v_t'),
+            col('predictions.prediction').alias('prediction')
+        ).filter(col('isAnomaly').isNotNull())
+        """
 
         #Scrivo i risultati delle prediction su Kafka
         sq = prediction_df.withColumn("value", struct(col('window.start').alias('window_start'),
@@ -138,10 +158,10 @@ def main():
                                                       col('predictions.prediction').alias('prediction')))\
             .select(
                 to_json(col('value')).alias('value'),
-                col('window.start').alias('key')
+                col('window.start').cast(StringType()).alias('key')
             )\
             .writeStream.format('kafka')\
-            .option('kafka.boostrap.servers', 'localhost:9092')\
+            .option('kafka.bootstrap.servers', 'localhost:9092')\
             .option('topic', 'predictions')\
             .option('checkpointLocation', '/tmp/spark-checkpoint')\
             .start()

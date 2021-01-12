@@ -114,14 +114,22 @@ def main():
             col('features'),
             predict('features').alias('pred')
         )
+        final_df = final_df.select(
+            col('window'),
+            col('features'),
+            col('pred.shape_before').alias('shape_before'),
+            col('pred.shape_after').alias('shape_after'),
+            col('pred.threshold_set_t').alias('threshold_set_t'),
+            col('pred.threshold_v_t').alias('threshold_v_t')
+        ).filter(col('shape_before').isNotNull())
         #Add filtering of null values! Or not?
         #Scrivo i risultati delle prediction su Kafka
         sq = final_df.withColumn("value", struct(col('features'), col('window.start').alias('window_start'),
                                                       col('window.end').alias('window_end'),
-                                                      col('pred.shape_before').alias('shape_before'),
-                                                      col('pred.shape_after').alias('shape_after'),
-                                                      col('pred.threshold_set_t').alias('threshold_set_t'),
-                                                      col('pred.threshold_v_t').alias('threshold_v_t')))\
+                                                      col('shape_before'),
+                                                      col('shape_after'),
+                                                      col('threshold_set_t'),
+                                                      col('threshold_v_t')))\
             .select(
                 to_json(col('value')).alias('value')
             )\
