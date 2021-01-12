@@ -13,11 +13,12 @@ import numpy as np
 from typing import Iterator
 from seldon_core.seldon_client import SeldonClient
 
-
-# spark-submit
-# --jars /mnt/c/Users/carlo/Desktop/SbtScalaDemo/target/scala-2.12/sbtscalademo_2.12-0.2.jar
-# --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.0.1
-# Streaming_Demo.py
+"""
+spark-submit \
+--jars /mnt/c/Users/carlo/Desktop/SbtScalaDemo/target/scala-2.12/sbtscalademo_2.12-0.2.jar \
+--packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.0.1 \
+Streaming_Demo.py
+"""
 def main():
     ss = None
     try:
