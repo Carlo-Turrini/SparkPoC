@@ -21,6 +21,7 @@ from seldon_core.seldon_client import SeldonClient
 def main():
     ss = None
     try:
+        #Minikube esplode se settiamo il parallelismo di Spark > 1 essendo che esegue in locale su un nodo solo
         sconf = SparkConf() \
             .set("spark.sql.execution.arrow.pyspark.enabled", "true") \
             .set("spark.sql.execution.arrow.pyspark.fallback.enabled", "true")
@@ -82,9 +83,6 @@ def main():
 
         features_df.printSchema()
 
-        #Alternativa: scompatto e aggiungo campi:
-        #   threshold -> threshold_set_t, threshold_v_t -> DoubleType()
-        #   mae -> mae_set_t, mae_v_t -> DoubleType()
         pandas_schema = StructType([
             StructField('isAnomaly', BooleanType(), True),
             StructField('threshold_set_t', DoubleType(), True),
@@ -116,7 +114,6 @@ def main():
                         features = np.array(elem).astype(np.float32)
                         features = features.reshape(1, 20, 2)
                         r = sc.predict(transport='grpc', shape=features.shape, data=features, client_return_type='dict')
-                        print(r)
                         prediction = np.array(r.response.get('data').get('tftensor').get('floatVal')).reshape(-1, 20, 2)
                         mae = np.mean(np.abs(prediction - features), axis=1)[0]
                         anomaly = mae[0] > threshold[0] or mae[1] > threshold[1]
