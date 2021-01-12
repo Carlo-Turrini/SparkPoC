@@ -27,4 +27,4 @@ spec:
           type: STRING
           value: output
     name: default
-    replicas: 1
+    replicas: 3
