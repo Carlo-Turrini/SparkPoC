@@ -27,7 +27,7 @@ def main():
             .set("spark.sql.execution.arrow.pyspark.enabled", "true") \
             .set("spark.sql.execution.arrow.pyspark.fallback.enabled", "true")
         ss = SparkSession.builder \
-            .appName("Streaming Inference - Sacmi") \
+            .appName("Streaming Inference - Seldon") \
             .config(conf=sconf) \
             .master("local[1]")\
             .getOrCreate()
@@ -90,7 +90,7 @@ def main():
             StructField('threshold_v_t', DoubleType(), True),
             StructField('mae_set_t', DoubleType(), True),
             StructField('mae_v_t', DoubleType(), True),
-            StructField('prediction', ArrayType(ArrayType(ArrayType(DoubleType()))), True)
+            StructField('prediction', ArrayType(ArrayType(DoubleType())), True)
         ])
 
         @pandas_udf(pandas_schema)
@@ -118,7 +118,7 @@ def main():
                         prediction = np.array(r.response.get('data').get('tftensor').get('floatVal')).reshape(-1, 20, 2)
                         mae = np.mean(np.abs(prediction - features), axis=1)[0]
                         anomaly = mae[0] > threshold[0] or mae[1] > threshold[1]
-                        data_point = [anomaly, threshold[0], threshold[1], mae[0], mae[1], prediction.tolist()]
+                        data_point = [anomaly, threshold[0], threshold[1], mae[0], mae[1], prediction.tolist()[0]]
                         results.append(data_point)
                 yield pd.DataFrame(data=results, columns=['isAnomaly', 'threshold_set_t', 'threshold_v_t',
                                                           'mae_set_t', 'mae_v_t', 'prediction'])
@@ -131,7 +131,7 @@ def main():
 
         #Se voglio filtrare le righe che presentano valori null, ovvero per le quali non è stata fatta alcuna
         #   prediction per mancanza di dati sufficienti nella window:
-        """
+
         prediction_df = prediction_df.select(
             col('window'),
             col('features'),
@@ -142,21 +142,21 @@ def main():
             col('predictions.threshold_v_t').alias('threshold_v_t'),
             col('predictions.prediction').alias('prediction')
         ).filter(col('isAnomaly').isNotNull())
-        """
+
 
         #Scrivo i risultati delle prediction su Kafka
         sq = prediction_df.withColumn("value", struct(col('window.start').alias('window_start'),
                                                       col('window.end').alias('window_end'),
-                                                      col('predictions.isAnomaly').alias('isAnomaly'),
-                                                      col('predictions.mae_set_t').alias('mae_set_t'),
-                                                      col('predictions.mae_v_t').alias('mae_v_t'),
-                                                      col('predictions.threshold_set_t').alias('threshold_set_t'),
-                                                      col('predictions.threshold_v_t').alias('threshold_v_t'),
+                                                      col('isAnomaly'),
+                                                      col('mae_set_t'),
+                                                      col('mae_v_t'),
+                                                      col('threshold_set_t'),
+                                                      col('threshold_v_t'),
                                                       col('features'),
-                                                      col('predictions.prediction').alias('prediction')))\
+                                                      col('prediction')))\
             .select(
                 to_json(col('value')).alias('value'),
-                col('window.start').cast(StringType()).alias('key')
+                col('window.end').cast(StringType()).alias('key')
             )\
             .writeStream.format('kafka')\
             .option('kafka.bootstrap.servers', 'localhost:9092')\

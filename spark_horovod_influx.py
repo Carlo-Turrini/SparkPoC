@@ -29,7 +29,7 @@ def influx_data():
 
     query = f'from(bucket: \"{bucket}\")' \
             f'|> range(start: -2d) ' \
-            f'|> filter(fn: (r) => r["_measurement"] == "kafka_consumer")' \
+            f'|> filter(fn: (r) => r["_measurement"] == "kafka_consumer and r["key"] == "temperature_modbus"")' \
             f'|> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")' \
             f'|> keep(columns: ["_time", "set_t", "v_t"])' \
             f'|> rename(columns: {{_time: "timestamp"}})' \

@@ -1,7 +1,7 @@
 from pyspark.sql import SparkSession, DataFrame
 from pyspark import SparkConf, SparkContext
 from pyspark.sql.column import Column, _to_java_column, _to_seq
-from pyspark.sql.functions import col, window, struct
+from pyspark.sql.functions import col, window, struct, unix_timestamp
 from pyspark.ml.feature import VectorAssembler, MinMaxScalerModel
 from pyspark.sql.functions import to_json, from_json
 from pyspark.sql.pandas.functions import pandas_udf
@@ -28,7 +28,7 @@ def main():
             .set("spark.sql.execution.arrow.pyspark.enabled", "true") \
             .set("spark.sql.execution.arrow.pyspark.fallback.enabled", "true")
         ss = SparkSession.builder \
-            .appName("Streaming Inference - Sacmi") \
+            .appName("Streaming Inference - TF Serving") \
             .config(conf=sconf) \
             .master("local[1]")\
             .getOrCreate()
@@ -91,7 +91,7 @@ def main():
             StructField('threshold_v_t', DoubleType(), True),
             StructField('mae_set_t', DoubleType(), True),
             StructField('mae_v_t', DoubleType(), True),
-            StructField('prediction', ArrayType(ArrayType(ArrayType(DoubleType()))), True)
+            StructField('prediction', ArrayType(ArrayType(DoubleType())), True)
         ])
 
         @pandas_udf(pandas_schema)
@@ -124,7 +124,7 @@ def main():
                         prediction = np.array(list(result.outputs['output'].float_val)).reshape(-1, 20, 2)
                         mae = np.mean(np.abs(prediction - features), axis=1)[0]
                         anomaly = mae[0] > threshold[0] or mae[1] > threshold[1]
-                        data_point = [anomaly, threshold[0], threshold[1], mae[0], mae[1], prediction.tolist()]
+                        data_point = [anomaly, threshold[0], threshold[1], mae[0], mae[1], prediction.tolist()[0]]
                         results.append(data_point)
                 yield pd.DataFrame(data=results, columns=['isAnomaly', 'threshold_set_t', 'threshold_v_t',
                                                           'mae_set_t', 'mae_v_t', 'prediction'])
@@ -137,9 +137,10 @@ def main():
 
         #Se voglio filtrare le righe che presentano valori null, ovvero per le quali non è stata fatta alcuna
         #   prediction per mancanza di dati sufficienti nella window:
-        """
+
         prediction_df = prediction_df.select(
-            col('window'),
+            col('window.start').alias('window_start'),
+            col('window.end').alias('window_end'),
             col('features'),
             col('predictions.isAnomaly').alias('isAnomaly'),
             col('predictions.mae_set_t').alias('mae_set_t'),
@@ -148,26 +149,27 @@ def main():
             col('predictions.threshold_v_t').alias('threshold_v_t'),
             col('predictions.prediction').alias('prediction')
         ).filter(col('isAnomaly').isNotNull())
-        """
+
 
         #Scrivo i risultati delle prediction su Kafka
-        sq = prediction_df.withColumn("value", struct(col('window.start').alias('window_start'),
-                                                      col('window.end').alias('window_end'),
-                                                      col('predictions.isAnomaly').alias('isAnomaly'),
-                                                      col('predictions.mae_set_t').alias('mae_set_t'),
-                                                      col('predictions.mae_v_t').alias('mae_v_t'),
-                                                      col('predictions.threshold_set_t').alias('threshold_set_t'),
-                                                      col('predictions.threshold_v_t').alias('threshold_v_t'),
+        sq = prediction_df.withColumn("value", struct(col('window_start'),
+                                                      col('window_end'),
+                                                      unix_timestamp(col('window_end')).alias('event_timestamp'),
+                                                      col('isAnomaly'),
+                                                      col('mae_set_t'),
+                                                      col('mae_v_t'),
+                                                      col('threshold_set_t'),
+                                                      col('threshold_v_t'),
                                                       col('features'),
-                                                      col('predictions.prediction').alias('prediction')))\
+                                                      col('prediction')))\
             .select(
                 to_json(col('value')).alias('value'),
-                col('window.start').cast(StringType()).alias('key')
+                col('window_end').cast(StringType()).alias('key'),
             )\
             .writeStream.format('kafka')\
             .option('kafka.bootstrap.servers', 'localhost:9092')\
             .option('topic', 'predictions')\
-            .option('checkpointLocation', '/tmp/spark-checkpoint')\
+            .option('checkpointLocation', '/tmp/spark-streaming-tf-serving-checkpoint')\
             .start()
         sq.awaitTermination()
 

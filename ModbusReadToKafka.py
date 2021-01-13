@@ -2,6 +2,8 @@ from pymodbus.client.sync import ModbusTcpClient
 import time
 import json
 from confluent_kafka import Producer
+import datetime as dt
+from dateutil import tz
 
 
 def main():
@@ -19,7 +21,8 @@ def main():
         while True:
             set_t = client.read_holding_registers(1, 1, unit=UNIT)
             v_t = client.read_holding_registers(3, 1, unit=UNIT)
-            value = json.dumps({'set_t': set_t.registers[0], 'v_t': v_t.registers[0]})
+            value = json.dumps({'set_t': set_t.registers[0], 'v_t': v_t.registers[0],
+                                'event_timestamp': dt.datetime.now().strftime('%s')})
             print("Producing record: {}\t{}".format(key, value))
             producer.produce(topic=topic, key=key, value=value, on_delivery=acked)
             producer.poll(1)
