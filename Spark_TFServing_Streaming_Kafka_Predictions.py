@@ -107,7 +107,7 @@ def main():
             channel = grpc.insecure_channel('localhost:8500')
             stub = prediction_service_pb2_grpc.PredictionServiceStub(channel)
             grpc_request = predict_pb2.PredictRequest()
-            grpc_request.model_spec.name = 'lstm_sacmi'
+            grpc_request.model_spec.name = 'lstm_anomaly'
             grpc_request.model_spec.signature_name = 'serving_default'
             for series in series_iterator:
                 results = []

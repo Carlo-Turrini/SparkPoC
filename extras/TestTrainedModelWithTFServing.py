@@ -5,13 +5,13 @@ import numpy as np
 
 
 # Avvia TF server:
-#   tensorflow_model_server --port=8500 --rest_api_port=8501 --model_name=lstm_sacmi
+#   tensorflow_model_server --port=8500 --rest_api_port=8501 --model_name=lstm_anomaly
 #   --model_base_path="/home/tarlo/models/sacmi_anomaly_detection"
 def predict():
     channel = grpc.insecure_channel('localhost:8500')
     stub = prediction_service_pb2_grpc.PredictionServiceStub(channel)
     grpc_request = predict_pb2.PredictRequest()
-    grpc_request.model_spec.name = 'lstm_sacmi'
+    grpc_request.model_spec.name = 'lstm_anomaly'
     grpc_request.model_spec.signature_name = 'serving_default'
 
     data_point = [[0.45, 0.66], [0.45, 0.57], [0.45, 0.66], [0.45, 0.57], [0.45, 0.66], [0.45, 0.57],
