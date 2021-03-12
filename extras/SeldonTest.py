@@ -12,7 +12,7 @@ import numpy as np
 #   kubectl port-forward $(kubectl get pods -l istio=ingressgateway -n istio-system
 #   -o jsonpath='{.items[0].metadata.name}') -n istio-system 8003:8080
 # Delete deployment:
-#   kubectl delete -f /mnt/c/Users/carlo/PycharmProjects/SparkPoC/lstm_sacmi_anomaly_detection_pvc.yaml
+#   kubectl delete -f /mnt/c/Users/carlo/PycharmProjects/SparkPoC/lstm_anomaly_detection_pvc.yaml
 def main():
     sc = SeldonClient(deployment_name='lstm-sacmi-model', namespace='istio-seldon',
                       gateway_endpoint='localhost:8003', gateway='istio')

@@ -61,17 +61,12 @@ def main():
 
         schema = StructType([
             StructField('timestamp', TimestampType(), False),
-            StructField('set_t', StringType(), False),
+            StructField('set_t', FloatType(), False),
             StructField('v_t', FloatType(), False)
         ])
 
         # Crete df from influx data
-        df = ss.createDataFrame(data=influx_data(), schema=schema)\
-            .select(
-            col('timestamp'),
-            col('set_t').cast(IntegerType()).alias('set_t'),
-            col('v_t')
-        )
+        df = ss.createDataFrame(data=influx_data(), schema=schema)
 
         # Prepare features for training with Horovod
         assembler = VectorAssembler(inputCols=["set_t", "v_t"], outputCol="features")
