@@ -3,6 +3,7 @@ import random
 import time
 
 
+# Script per la simulazione dei due parametri set_t e v_t
 def main():
     # SET_T varia ogni 600 secondi (ovvero 10 minuti)
     # V_T varia ogni secondo

@@ -13,23 +13,26 @@ import numpy as np
 from typing import Iterator
 from seldon_core.seldon_client import SeldonClient
 
+# Script per effettuare predizioni con Seldon
 """
 spark-submit \
---jars /mnt/c/Users/carlo/Desktop/SbtScalaDemo/target/scala-2.12/sbtscalademo_2.12-0.2.jar \
+--jars ./scala/sbtscalademo_2.12-0.2.jar \
 --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.0.1 \
 Spark_Streaming_Kafka_Predictions.py
 """
+
+
 def main():
     ss = None
     try:
-        #Minikube esplode se settiamo il parallelismo di Spark > 1 essendo che esegue in locale su un nodo solo
+        # Cambiare l'indirizzo del master se non si esegue su un'istanza locale di Spark ma su un cluster
         sconf = SparkConf() \
             .set("spark.sql.execution.arrow.pyspark.enabled", "true") \
             .set("spark.sql.execution.arrow.pyspark.fallback.enabled", "true")
         ss = SparkSession.builder \
             .appName("Streaming Inference - Seldon") \
             .config(conf=sconf) \
-            .master("local[1]")\
+            .master("local[1]") \
             .getOrCreate()
 
         json_schema = StructType([
@@ -37,17 +40,17 @@ def main():
             StructField('v_t', IntegerType(), False)
         ])
 
-        stream_df = ss.readStream\
-            .format("kafka")\
-            .option("kafka.bootstrap.servers", "localhost:9092")\
-            .option("kafka.group.id", "spark_modbus")\
-            .option("subscribe", "temperature_modbus")\
-            .option("failOnDataLoss", "false")\
-            .load()\
+        stream_df = ss.readStream \
+            .format("kafka") \
+            .option("kafka.bootstrap.servers", "localhost:9092") \
+            .option("kafka.group.id", "spark_modbus") \
+            .option("subscribe", "temperature_modbus") \
+            .option("failOnDataLoss", "false") \
+            .load() \
             .select(
-                col('timestamp').cast(TimestampType()).alias('timestamp'),
-                from_json(col('value').cast(StringType()), json_schema).alias('modbus_data')
-            )
+            col('timestamp').cast(TimestampType()).alias('timestamp'),
+            from_json(col('value').cast(StringType()), json_schema).alias('modbus_data')
+        )
 
         flattened_df = stream_df.select(
             col('timestamp'),
@@ -58,6 +61,8 @@ def main():
         assembler = VectorAssembler(inputCols=['set_t', 'v_t'], outputCol='features')
         vec_df = assembler.transform(flattened_df)
 
+        # Sostituire il path con quello corretto. Il file in questione contiene il modello MinMaxScaler addestrato
+        # in modalità batch durante il training.
         scaler_model = MinMaxScalerModel.load('/home/tarlo/min_max_scaler_model_modbus')
         scaled_df = scaler_model.transform(vec_df).select(
             col('timestamp'),
@@ -72,7 +77,7 @@ def main():
             vector_to_array(col('features_with_timestamp')).alias('features_with_timestamp')
         )
 
-        #Builds ordered sequences for predictions
+        # Builds ordered sequences for predictions
         def featurize(col):
             sc = SparkContext._active_spark_context
             _featurize = sc._jvm.udaf_demo.GroupArray.apply
@@ -95,7 +100,7 @@ def main():
 
         @pandas_udf(pandas_schema)
         def predict(series_iterator: Iterator[pd.Series]) -> Iterator[pd.DataFrame]:
-            #Fai il load del MAE threshold!
+            # Fai il load del MAE threshold!
             threshold = pd.read_parquet(engine='pyarrow', path='file:///home/tarlo/sacmi_mae_threshold')
             sc = SeldonClient(deployment_name='lstm-anomaly-model', namespace='istio-seldon',
                               gateway_endpoint='localhost:8003', gateway='istio')
@@ -125,9 +130,8 @@ def main():
             predict('features').alias('predictions')
         )
 
-        #Se voglio filtrare le righe che presentano valori null, ovvero per le quali non è stata fatta alcuna
-        #   prediction per mancanza di dati sufficienti nella window:
-
+        # L'ultimo comando, filter server per filtrare le righe che presentano valori null,
+        # ovvero per le quali non è stata fatta alcuna prediction per mancanza di dati sufficienti nella window:
         prediction_df = prediction_df.select(
             col('window'),
             col('features'),
@@ -139,8 +143,7 @@ def main():
             col('predictions.prediction').alias('prediction')
         ).filter(col('isAnomaly').isNotNull())
 
-
-        #Scrivo i risultati delle prediction su Kafka
+        # Scrivo i risultati delle prediction su Kafka
         sq = prediction_df.withColumn("value", struct(col('window.start').alias('window_start'),
                                                       col('window.end').alias('window_end'),
                                                       col('isAnomaly'),
@@ -149,15 +152,15 @@ def main():
                                                       col('threshold_set_t'),
                                                       col('threshold_v_t'),
                                                       col('features'),
-                                                      col('prediction')))\
+                                                      col('prediction'))) \
             .select(
-                to_json(col('value')).alias('value'),
-                col('window.end').cast(StringType()).alias('key')
-            )\
-            .writeStream.format('kafka')\
-            .option('kafka.bootstrap.servers', 'localhost:9092')\
-            .option('topic', 'predictions')\
-            .option('checkpointLocation', '/tmp/spark-checkpoint')\
+            to_json(col('value')).alias('value'),
+            col('window.end').cast(StringType()).alias('key')
+        ) \
+            .writeStream.format('kafka') \
+            .option('kafka.bootstrap.servers', 'localhost:9092') \
+            .option('topic', 'predictions') \
+            .option('checkpointLocation', '/tmp/spark-checkpoint') \
             .start()
         sq.awaitTermination()
 

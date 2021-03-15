@@ -4,7 +4,7 @@ import tensorflow as tf
 import numpy as np
 
 
-# Avvia TF server:
+# Avvia TF Serving server:
 #   tensorflow_model_server --port=8500 --rest_api_port=8501 --model_name=lstm_anomaly
 #   --model_base_path="/home/tarlo/models/sacmi_anomaly_detection"
 def predict():

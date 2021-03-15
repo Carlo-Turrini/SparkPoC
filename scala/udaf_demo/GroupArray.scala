@@ -7,6 +7,7 @@ import org.apache.spark.sql.types.{ArrayType, DataType, DoubleType, StructType}
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
+//Oggetto Scala rappresentante una UDAF per aggregare i dati in serie temporali per l'inferenza streaming
 object GroupArray extends UserDefinedAggregateFunction {
   override def inputSchema: StructType = new StructType().add("scaled_features", ArrayType(DoubleType))
 
